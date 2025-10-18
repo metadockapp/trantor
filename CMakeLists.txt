@@ -37,6 +37,11 @@ set(INSTALL_TRANTOR_CMAKE_DIR
     CACHE PATH "Installation directory for cmake files"
 )
 
+# Disable CRT secure warnings for this third-party library (MSVC)
+if(MSVC)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
 add_library(${PROJECT_NAME})
 if(BUILD_SHARED_LIBS)
   list(
