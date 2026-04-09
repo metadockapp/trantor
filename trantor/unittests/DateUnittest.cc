@@ -1,6 +1,7 @@
 #include <trantor/utils/Date.h>
 #include <gtest/gtest.h>
 #include <string>
+#include <vector>
 #include <iostream>
 using namespace trantor;
 TEST(Date, constructorTest)
@@ -112,6 +113,51 @@ TEST(Date, DatabaseStringTest)
     auto epoch = dbDateGMT.microSecondsSinceEpoch();
     EXPECT_EQ(epoch, 0);
 }
+TEST(Date, TimezoneTest)
+{
+    std::string dat0 = "2024-01-01";
+    std::string str0 = "2024-01-01 04:00:00.123";
+    std::vector<std::string> strs{
+        // in case we miss any comma, put brackets around
+        {"2024-01-01 04:00:00.123Z"},
+        {"2024-01-01 12:00:00.123 +08:00"},
+        {"2024-01-01 11:00:00.123+0700"},
+        {"2024-01-01 10:00:00.123 0600"},
+        {"2024-01-01 09:00:00.123 +0500"},
+        {"2024-01-01 08:00:00.123 04"},
+        {"2024-01-01 07:00:00.123+03"},
+        {"2024-01-01 06:30:00.123+02:30"},
+        {"2024-01-01 03:00:00.123 -01:00"},
+        {"2024-01-01 02:00:00.123-02:00"},
+        {"2024-01-01 01:00:00.123 -0300"},
+        {"2024-01-01 00:00:00.123-04"},
+        {"2023-12-31 23:00:00.123 -05"},
+        // with T
+        {"2024-01-01T04:00:00.123000Z"},
+        {"2024-01-01T12:00:00.123 +08:00"},
+        // bad ones, but should pass
+        {"2024-01-01T04:00:00.123+0"},
+        {"2024-01-01T04:00:00.123-"},
+    };
+
+    auto date = trantor::Date::fromDbString(str0);
+    for (auto &s : strs)
+    {
+        auto dateTz = trantor::Date::fromISOString(s);
+        EXPECT_EQ(date.microSecondsSinceEpoch(),
+                  dateTz.microSecondsSinceEpoch());
+    }
+
+    // time string without tz, should be parsed as local time
+    auto dateLocal = trantor::Date::fromDbStringLocal(str0);
+    EXPECT_EQ(dateLocal.microSecondsSinceEpoch(),
+              trantor::Date::fromISOString(str0).microSecondsSinceEpoch());
+
+    // only date part
+    EXPECT_EQ(dateLocal.secondsSinceEpoch() - 4 * 3600,
+              trantor::Date::fromISOString(dat0).secondsSinceEpoch());
+}
+
 int main(int argc, char **argv)
 {
     testing::InitGoogleTest(&argc, argv);

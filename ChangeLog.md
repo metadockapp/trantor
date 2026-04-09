@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.26] - 2026-01-26
+
+### Changed
+
+- Enable Botan3 on MacOS CI.
+
+- remove TU specific variables.
+
+- Support parsing datetime with timezone.
+
+### Fixed
+
+- Fix building error for -Werror=unused-value.
+
+- Fix SPDLOG_FMT_EXTERNAL definition in CMakeLists.
+
+- Fix range sendFile() for MinGW.
+
+- Fix fread check for reading randomness.
+
+- Fixes to TLS backend.
+
+- Fix iptos.
+
+- Fix the error handling of kBufferOffset bytes when adjusting the buffer.
+
+## [1.5.25] - 2025-10-29
+
+### Fixed
+
+- Fix Date::fromDbStringLocal() when YYYY-MM-DD is given.
+
+- Fix typo MICRO_SECONDS_PER_SEC.
+
 ## [1.5.24] - 2025-06-20
 
 ### Changed
@@ -11,6 +45,7 @@ All notable changes to this project will be documented in this file.
 - refactor: replace atomic counter with plain int in RunInLoopTest2.
 
 ### Fixed
+
 - Fix compile errors in some case.
 
 - Fix a bug when sending streams.
@@ -707,7 +742,11 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0-rc1] - 2019-06-11
 
-[Unreleased]: https://github.com/an-tao/trantor/compare/v1.5.24...HEAD
+[Unreleased]: https://github.com/an-tao/trantor/compare/v1.5.26...HEAD
+
+[1.5.26]: https://github.com/an-tao/trantor/compare/v1.5.25...v1.5.26
+
+[1.5.25]: https://github.com/an-tao/trantor/compare/v1.5.24...v1.5.25
 
 [1.5.24]: https://github.com/an-tao/trantor/compare/v1.5.23...v1.5.24
 

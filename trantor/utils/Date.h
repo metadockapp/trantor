@@ -72,13 +72,7 @@ class TRANTOR_EXPORT Date
         return Date::date();
     }
 
-    static int64_t timezoneOffset()
-    {
-        static int64_t offset = -(
-            Date::fromDbStringLocal("1970-01-03 00:00:00").secondsSinceEpoch() -
-            2LL * 3600LL * 24LL);
-        return offset;
-    }
+    static int64_t timezoneOffset();
 
     /**
      * @brief Return a new Date instance that represents the time after some
@@ -292,6 +286,19 @@ class TRANTOR_EXPORT Date
      * Inverse of toDbString()
      */
     static Date fromDbString(const std::string &datetime);
+
+    /**
+     * @brief Parse a datetime string in ISO-8601 format with some flexibility.
+     * Accepts the following formats:
+     * - yyyy-mm-dd
+     * - yyyy-mm-dd[ T]HH:MM[:SS[.ffffff]]
+     * - yyyy-mm-dd[ T]HH:MM[:SS[.ffffff]][timezone]
+     * where [timezone] can be one of:
+     *   - Z
+     *   - +HH:MM, -HH:MM, HH:MM (unsigned treated as positive)
+     *   - +HHMM,  -HHMM,  HHMM  (unsigned treated as positive)
+     */
+    static Date fromISOString(const std::string &datetime);
 
     /* clang-format off */
     /**

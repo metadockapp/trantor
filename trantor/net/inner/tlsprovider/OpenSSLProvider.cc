@@ -8,13 +8,12 @@
 #include <openssl/bio.h>
 #include <openssl/x509v3.h>
 
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <list>
 #include <unordered_map>
-#include <array>
 #include <limits>
+#include "callbacks.h"
 
 using namespace trantor;
 
@@ -69,62 +68,6 @@ inline bool loadWindowsSystemCert(X509_STORE *store)
 }
 #endif
 
-inline bool verifyCommonName(X509 *cert, const std::string &hostname)
-{
-    X509_NAME *subjectName = X509_get_subject_name(cert);
-
-    if (subjectName != nullptr)
-    {
-        std::array<char, BUFSIZ> name;
-        auto length = X509_NAME_get_text_by_NID(subjectName,
-                                                NID_commonName,
-                                                name.data(),
-                                                (int)name.size());
-        if (length == -1)
-            return false;
-
-        return utils::verifySslName(std::string(name.begin(),
-                                                name.begin() + length),
-                                    hostname);
-    }
-
-    return false;
-}
-
-inline bool verifyAltName(X509 *cert, const std::string &hostname)
-{
-    bool good = false;
-    auto altNames = static_cast<const struct stack_st_GENERAL_NAME *>(
-        X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr));
-
-    if (altNames)
-    {
-        int numNames = sk_GENERAL_NAME_num(altNames);
-
-        for (int i = 0; i < numNames && !good; i++)
-        {
-            auto val = sk_GENERAL_NAME_value(altNames, i);
-            if (val->type != GEN_DNS)
-            {
-                LOG_WARN << "Name using IP addresses are not supported. Open "
-                            "an issue if you need that feature";
-                continue;
-            }
-#if (OPENSSL_VERSION_NUMBER >= 0x10100000L)
-            auto name = (const char *)ASN1_STRING_get0_data(val->d.ia5);
-#else
-            auto name = (const char *)ASN1_STRING_data(val->d.ia5);
-#endif
-            auto name_len = (size_t)ASN1_STRING_length(val->d.ia5);
-            good = utils::verifySslName(std::string(name, name + name_len),
-                                        hostname);
-        }
-    }
-
-    GENERAL_NAMES_free((STACK_OF(GENERAL_NAME) *)altNames);
-    return good;
-}
-
 static bool validatePeerCertificate(SSL *ssl,
                                     X509 *cert,
                                     const std::string &hostname,
@@ -135,12 +78,16 @@ static bool validatePeerCertificate(SSL *ssl,
     assert(cert != nullptr);
     LOG_TRACE << "Validating peer certificate";
 
-    if (isServer)
+    if (!isServer)
     {
-        bool domainIsValid =
-            verifyCommonName(cert, hostname) || verifyAltName(cert, hostname);
-        if (!domainIsValid)
+        const int rc =
+            X509_check_host(cert, hostname.data(), hostname.size(), 0, nullptr);
+        if (rc != 1)
+        {
+            LOG_TRACE << "Peer certificate does not match hostname: "
+                      << hostname;
             return false;
+        }
     }
 
     auto result = SSL_get_verify_result(ssl);
@@ -422,16 +369,20 @@ class SessionManager
 #endif
     }
 
+    // Returns a session with an additional reference held by the caller.
+    // Caller must SSL_SESSION_free() when done. Required because the entry
+    // in sessionMap_ may be evicted/replaced/expired by another thread the
+    // moment we release the mutex, so the SessionManager's reference is not
+    // a stable ownership root for the returned pointer.
     SSL_SESSION *get(const std::string &hostname, InetAddress peerAddr)
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto key = toKey(hostname, peerAddr);
-        auto it = sessionMap_.find(key);
-        if (it != sessionMap_.end())
-        {
-            return it->second->session;
-        }
-        return nullptr;
+        auto it = sessionMap_.find(toKey(hostname, peerAddr));
+        if (it == sessionMap_.end())
+            return nullptr;
+        SSL_SESSION *s = it->second->session;
+        SSL_SESSION_up_ref(s);
+        return s;
     }
 
     void removeExcessSession()
@@ -441,7 +392,7 @@ class SessionManager
         assert(mexExtendSize_ > 0);
         if (sessions_.size() < size_t(maxSessions_ + mexExtendSize_))
             return;
-        if (sessions_.size() > size_t(maxSessions_))
+        while (sessions_.size() > size_t(maxSessions_))
         {
             auto it = sessions_.end();
             it--;
@@ -513,9 +464,14 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
                     alpnList.push_back(ch);
                     alpnList.append(proto);
                 }
-                SSL_set_alpn_protos(ssl_,
-                                    (const unsigned char *)(alpnList.data()),
-                                    (unsigned int)alpnList.size());
+                if (SSL_set_alpn_protos(
+                        ssl_,
+                        (const unsigned char *)(alpnList.data()),
+                        (unsigned int)alpnList.size()) != 0)
+                {
+                    LOG_TRACE << "Failed to set ALPN";
+                    handleSSLError(SSLError::kSSLHandshakeError);
+                }
             }
 
             SSL_SESSION *cachedSession =
@@ -523,7 +479,9 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
                                    conn_->peerAddr());
             if (cachedSession)
             {
+                // SSL_set_session takes its own reference; release ours.
                 SSL_set_session(ssl_, cachedSession);
+                SSL_SESSION_free(cachedSession);
             }
             SSL_set_connect_state(ssl_);
         }
@@ -665,7 +623,10 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
                         cert,
                         policyPtr_->getHostname(),
                         policyPtr_->getAllowBrokenChain(),
-                        contextPtr_->isServer);
+                        !contextPtr_
+                             ->isServer);  // From the server's point of view,
+                                           // the client certificate is verified
+                                           // and vice versa
                     if (!valid)
                     {
                         LOG_TRACE
@@ -751,6 +712,13 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
             else if (n <= 0)
             {
                 int err = SSL_get_error(ssl_, n);
+                if (err == SSL_ERROR_ZERO_RETURN)
+                {
+                    // Clean shutdown
+                    LOG_TRACE << "SSL connection closed cleanly";
+                    conn_->shutdown();
+                    return;
+                }
                 if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL)
                 {
                     handleSSLError(SSLError::kSSLProtocolError);
@@ -774,7 +742,7 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
         {
             appendToWriteBuffer((char *)data + n, len - n);
         }
-        BIO_reset(wbio_);
+        (void)BIO_reset(wbio_);
         if (n < 0)
             return -1;
         return len;
@@ -895,8 +863,8 @@ SSLContextPtr trantor::newSSLContext(const TLSPolicy &policy, bool isServer)
     }
 
     // Disable weak ciphers. Weak hash and ciphers can die in a fire.
-    int status =
-        SSL_CTX_set_cipher_list(ctx->ctx(), "MEDIUM:HIGH:!aNULL!MD5:!RC4!3DES");
+    int status = SSL_CTX_set_cipher_list(ctx->ctx(),
+                                         "MEDIUM:HIGH:!aNULL:!MD5:!RC4:!3DES");
     if (status != 1)
         throw std::runtime_error("Failed to select secure ciphers");
 

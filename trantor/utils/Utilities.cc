@@ -228,120 +228,6 @@ std::string fromWidePath(const std::wstring &wstrPath)
     return toUtf8(srcPath);
 }
 
-bool verifySslName(const std::string &certName, const std::string &hostname)
-{
-    if (certName.find('*') == std::string::npos)
-    {
-        return certName == hostname;
-    }
-
-    size_t firstDot = certName.find('.');
-    size_t hostFirstDot = hostname.find('.');
-    size_t pos, len, hostPos, hostLen;
-
-    if (firstDot != std::string::npos)
-    {
-        pos = firstDot + 1;
-    }
-    else
-    {
-        firstDot = pos = certName.size();
-    }
-
-    len = certName.size() - pos;
-
-    if (hostFirstDot != std::string::npos)
-    {
-        hostPos = hostFirstDot + 1;
-    }
-    else
-    {
-        hostFirstDot = hostPos = hostname.size();
-    }
-
-    hostLen = hostname.size() - hostPos;
-
-    // *. in the beginning of the cert name
-    if (certName.compare(0, firstDot, "*") == 0)
-    {
-        return certName.compare(pos, len, hostname, hostPos, hostLen) == 0;
-    }
-    // * in the left most. but other chars in the right
-    else if (certName[0] == '*')
-    {
-        // compare if `hostname` ends with `certName` but without the leftmost
-        // should be fine as domain names can't be that long
-        intmax_t hostnameIdx = hostname.size() - 1;
-        intmax_t certNameIdx = certName.size() - 1;
-        while (hostnameIdx >= 0 && certNameIdx != 0)
-        {
-            if (hostname[hostnameIdx] != certName[certNameIdx])
-            {
-                return false;
-            }
-            hostnameIdx--;
-            certNameIdx--;
-        }
-        if (certNameIdx != 0)
-        {
-            return false;
-        }
-        return true;
-    }
-    // * in the right of the first dot
-    else if (firstDot != 0 && certName[firstDot - 1] == '*')
-    {
-        if (certName.compare(pos, len, hostname, hostPos, hostLen) != 0)
-        {
-            return false;
-        }
-        for (size_t i = 0;
-             i < hostFirstDot && i < firstDot && certName[i] != '*';
-             i++)
-        {
-            if (hostname[i] != certName[i])
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-    // else there's a * in  the middle
-    else
-    {
-        if (certName.compare(pos, len, hostname, hostPos, hostLen) != 0)
-        {
-            return false;
-        }
-        for (size_t i = 0;
-             i < hostFirstDot && i < firstDot && certName[i] != '*';
-             i++)
-        {
-            if (hostname[i] != certName[i])
-            {
-                return false;
-            }
-        }
-        intmax_t hostnameIdx = hostFirstDot - 1;
-        intmax_t certNameIdx = firstDot - 1;
-        while (hostnameIdx >= 0 && certNameIdx >= 0 &&
-               certName[certNameIdx] != '*')
-        {
-            if (hostname[hostnameIdx] != certName[certNameIdx])
-            {
-                return false;
-            }
-            hostnameIdx--;
-            certNameIdx--;
-        }
-        return true;
-    }
-
-    assert(false && "This line should not be reached in verifySslName");
-    // should not reach
-    return certName == hostname;
-}
-
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
@@ -441,7 +327,7 @@ static bool systemRandomBytes(void *ptr, size_t size)
         LOG_FATAL << "Failed to open /dev/urandom for randomness";
         abort();
     }
-    if (fread(ptr, 1, size, fptr.get()) != 0)
+    if (fread(ptr, 1, size, fptr.get()) == size)
         return true;
 #endif
     return false;
@@ -533,9 +419,9 @@ bool secureRandomBytes(void *data, size_t len)
     auto now = chrono::steady_clock::now();
     // the proposed algorithm uses the time in nanoseconds, but we don't have a
     // way to read it (yet) not C++ provided a standard way to do it. Falling
-    // back to milliseconds. This along with additional entropy is hopefully
+    // back to microseconds. This along with additional entropy is hopefully
     // good enough.
-    state.time = chrono::time_point_cast<chrono::milliseconds>(now)
+    state.time = chrono::time_point_cast<chrono::microseconds>(now)
                      .time_since_epoch()
                      .count();
     // `now` lives on the stack, so address in each call _may_ be different.

@@ -208,18 +208,21 @@ static void byteToChars(std::string::iterator &dst, unsigned char byte)
 
 static std::string iptos(unsigned inet_addr)
 {
+    // Convert to host byte order
+    inet_addr = ntohl(inet_addr);
+
     // Initialize with a static buffer to force the constructor of string to get
     // fully inlined
     constexpr char stringInitBuffer[15]{};
     std::string out(stringInitBuffer, 15);
     std::string::iterator dst = out.begin();
-    byteToChars(dst, inet_addr >> 0 & 0xff);
+    byteToChars(dst, (inet_addr >> 24) & 0xff);
     *(dst++) = '.';
-    byteToChars(dst, inet_addr >> 8 & 0xff);
+    byteToChars(dst, (inet_addr >> 16) & 0xff);
     *(dst++) = '.';
-    byteToChars(dst, inet_addr >> 16 & 0xff);
+    byteToChars(dst, (inet_addr >> 8) & 0xff);
     *(dst++) = '.';
-    byteToChars(dst, inet_addr >> 24 & 0xff);
+    byteToChars(dst, inet_addr & 0xff);
     out.erase(dst, out.end());
     return out;
 }

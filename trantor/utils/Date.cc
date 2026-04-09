@@ -63,6 +63,13 @@ const Date Date::date()
     return Date(seconds * MICRO_SECONDS_PER_SEC + tv.tv_usec);
 #endif
 }
+
+int64_t Date::timezoneOffset()
+{
+    static int64_t offset = -Date(1970, 1, 1).secondsSinceEpoch();
+    return offset;
+}
+
 const Date Date::after(double second) const
 {
     return Date(static_cast<int64_t>(microSecondsSinceEpoch_ +
@@ -353,6 +360,154 @@ Date Date::fromDbString(const std::string &datetime)
 {
     return fromDbStringLocal(datetime).after(
         static_cast<double>(timezoneOffset()));
+}
+
+static int parseTzOffset(std::string &tz, int tzSign)
+{
+    if (tz.empty())
+    {
+        return 0;
+    }
+    if (tzSign == 0)
+    {
+        if (tz[0] == '-' || tz[0] == '+')
+        {
+            tzSign = tz[0] == '-' ? -1 : 1;
+            tz = tz.substr(1);
+        }
+        else
+        {
+            tzSign = 1;
+        }
+    }
+
+    if (tz == "Z")
+    {
+        return 0;
+    }
+
+    auto tzParts = splitString(tz, ":");
+    if (tzParts.size() == 1 && tz.size() >= 4)
+    {
+        tzParts = {tz.substr(0, 2), tz.substr(2)};  // 0800
+    }
+
+    int tzHour = tzParts.size() > 0 ? std::stoi(tzParts[0]) : 0;
+    int tzMin = tzParts.size() > 1 ? std::stoi(tzParts[1]) : 0;
+    return tzSign * (tzHour * 3600 + tzMin * 60);
+}
+
+// Variant of splitString(), accepts multiple single-char delimiters
+static std::vector<std::string> splitString2(const std::string &s,
+                                             const std::string &delimiters,
+                                             bool acceptEmptyString = false)
+{
+    if (delimiters.empty())
+        return std::vector<std::string>{};
+    std::vector<std::string> v;
+    size_t last = 0;
+    size_t next = 0;
+    while ((next = s.find_first_of(delimiters, last)) != std::string::npos)
+    {
+        if (next > last || acceptEmptyString)
+            v.push_back(s.substr(last, next - last));
+        last = next + 1;
+    }
+    if (s.length() > last || acceptEmptyString)
+        v.push_back(s.substr(last));
+    return v;
+}
+
+Date Date::fromISOString(const std::string &datetime)
+{
+    unsigned int year = {0}, month = {0}, day = {0}, hour = {0}, minute = {0},
+                 second = {0}, microSecond = {0};
+    int tzSign{0}, tzOffset{0};
+    std::vector<std::string> v = splitString2(datetime, "T ");
+    if (v.empty())
+    {
+        throw std::invalid_argument("Invalid date string: " + datetime);
+    }
+
+    // parse date
+    const std::vector<std::string> date = splitString(v[0], "-");
+    if (date.size() != 3)
+    {
+        throw std::invalid_argument("Invalid date string: " + datetime);
+    }
+    year = std::stol(date[0]);
+    month = std::stol(date[1]);
+    day = std::stol(date[2]);
+
+    // only have date part
+    if (v.size() <= 1)
+    {
+        return trantor::Date{year, month, day};
+    }
+
+    // check timezone without space separated
+    if (v.size() == 2)
+    {
+        auto pos = v[1].find('+');
+        if (pos != std::string::npos)
+        {
+            tzSign = 1;
+            v.push_back(v[1].substr(pos + 1));
+            v[1] = v[1].substr(0, pos);
+        }
+        else if ((pos = v[1].find('-')) != std::string::npos)
+        {
+            tzSign = -1;
+            v.push_back(v[1].substr(pos + 1));
+            v[1] = v[1].substr(0, pos);
+        }
+        else if (!v[1].empty() && v[1].back() == 'Z')
+        {
+            v[1].pop_back();
+            tzSign = 1;
+            v.emplace_back("Z");
+        }
+    }
+
+    // parse time
+    std::vector<std::string> timeParts = splitString(v[1], ":");
+    if (timeParts.size() < 2 || timeParts.size() > 3)
+    {
+        throw std::invalid_argument("Invalid time string: " + datetime);
+    }
+    hour = std::stol(timeParts[0]);
+    minute = std::stol(timeParts[1]);
+    if (timeParts.size() == 3)
+    {
+        auto secParts = splitString(timeParts[2], ".");
+        second = std::stol(secParts[0]);
+        // micro seconds
+        if (secParts.size() > 1)
+        {
+            if (secParts[1].length() > 6)
+            {
+                secParts[1].resize(6);
+            }
+            else if (secParts[1].length() < 6)
+            {
+                secParts[1].append(6 - secParts[1].length(), '0');
+            }
+            microSecond = std::stol(secParts[1]);
+        }
+    }
+
+    trantor::Date dt(year, month, day, hour, minute, second, microSecond);
+
+    // timezone
+    if (v.size() >= 3)
+    {
+        tzOffset = parseTzOffset(v[2], tzSign);
+        return dt.after(timezoneOffset() - tzOffset);
+    }
+    else
+    {
+        return dt;
+    }
 }
 
 std::string Date::toCustomFormattedStringLocal(const std::string &fmtStr,

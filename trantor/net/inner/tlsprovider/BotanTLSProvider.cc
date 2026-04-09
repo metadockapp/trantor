@@ -231,7 +231,7 @@ struct BotanTLSProvider : public TLSProvider,
             auto trunkLen = size - hasSent;
             if (trunkLen > maxSend)
                 trunkLen = maxSend;
-            channel_->send((const uint8_t *)ptr, size);
+            channel_->send((const uint8_t *)ptr + hasSent, trunkLen);
             // HACK: Botan doesn't provide a way to know how much raw data has
             // been written to the underlying transport. So we have to assume
             // that all data has been written. And cache the unwritten data in
@@ -474,8 +474,6 @@ SSLContextPtr trantor::newSSLContext(const TLSPolicy &policy, bool server)
             ctx->certStore =
                 std::make_shared<Botan::Flatfile_Certificate_Store>(
                     policy.getCaPath());
-            if (server)
-                ctx->requireClientCert = true;
         }
         else if (policy.getUseSystemCertStore())
         {
@@ -484,6 +482,8 @@ SSLContextPtr trantor::newSSLContext(const TLSPolicy &policy, bool server)
             ctx->certStore = systemCertStore;
         }
     }
+    if (server && policy.getValidate() && !policy.getCaPath().empty())
+        ctx->requireClientCert = true;
 
     if (policy.getUseOldTLS())
         LOG_WARN << "SSLPloicy have set useOldTLS to true. BUt Botan does not "
